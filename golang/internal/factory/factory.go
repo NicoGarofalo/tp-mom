@@ -9,18 +9,21 @@ type QueueMiddleware struct {
 	conn amqp.Connection
 	ch amqp.Channel
 	queue amqp.Queue
+	consumerTag string
 }
 
 
 func (qm *QueueMiddleware) StartConsuming(callbackFunc func(msg m.Message, ack func(), nack func())) error {
+	qm.consumerTag = "tag-" + qm.queue.Name
+
 	msgs, err := qm.ch.Consume(
 		qm.queueName,
-		"",     
-		false, 
-		false, 
-		false, 
-		false, 
-		nil,   
+		qm.consumerTag,
+		false,
+		false,
+		false,
+		false,
+		nil,
 	)
 
 	chanCloseNotify := make(chan *amqp.Error, 1)
@@ -48,14 +51,41 @@ func (qm *QueueMiddleware) StartConsuming(callbackFunc func(msg m.Message, ack f
 }
 
 func (qm *QueueMiddleware) StopConsuming() error {
+	err := qm.ch.Cancel(qm.consumerTag)
+	if err != nil {
+		return m.ErrMessageMiddlewareClose
+	}
 	return nil
 }
 
+// Falta handlear el otro error ademas de otras mejoras
 func (qm *QueueMiddleware) Send(msg m.Message) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	body := msg.Body
+	err := qm.ch.PublishWithContext(ctx,
+	"",     // exchange
+	qm.queue.Name, // routing key
+	false,  // mandatory
+	false,  // immediate
+	amqp.Publishing {
+		ContentType: "text/plain",
+		Body:        []byte(body),
+	})
+	if err != nil {
+		return m.ErrMessageMiddlewareMessage
+	}
+
+	
 	return nil
 }
 
 func (qm *QueueMiddleware) Close() error {
+	err := qm.conn.Close()
+	if err != nil {
+		return m.ErrMessageMiddlewareClose
+	}
 	return nil
 }
 
@@ -80,6 +110,9 @@ func CreateQueueMiddleware(queueName string, connectionSettings m.ConnSettings) 
 			amqp.QueueTypeArg: amqp.QueueTypeQuorum,
 		},
 	)
+	if err != nil {
+		return nil, m.ErrMessageMiddlewareMessage
+	}
 	
 	qm := QueueMiddleware{
 		conn: conn,
