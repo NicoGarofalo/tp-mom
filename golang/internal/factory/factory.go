@@ -70,6 +70,7 @@ func CreateExchangeMiddleware(exchange string, keys []string, connectionSettings
 		conn: conn,
 		ch: ch,
 		exchangeName: exchange,
+		topicKeys: keys,
 	}
 	return &em, nil
 }

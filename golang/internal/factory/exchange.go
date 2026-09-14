@@ -1,7 +1,8 @@
 package factory
 
 import (
-	"fmt"
+	"context"
+	"time"
 	m "github.com/7574-sistemas-distribuidos/tp-mom/golang/internal/middleware"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -12,12 +13,41 @@ type ExchangeMiddleware struct {
 	ch *amqp.Channel
 	exchangeName string
 	topicKeys []string
+	queue amqp.Queue
 }
 
 
 func (em *ExchangeMiddleware) StartConsuming(callbackFunc func(msg m.Message, ack func(), nack func())) error {
+	
+	q, err := em.ch.QueueDeclare(
+		"", // name
+		false, // durability
+		false, // delete when unused
+		true, // exclusive
+		false, // no-wait
+		nil, // args
+	)
+	if err != nil {
+		return m.ErrMessageMiddlewareMessage
+	}
+
+	em.queue = q
+
+	for _, topicKey := range em.topicKeys {
+		err = em.ch.QueueBind(
+			em.queue.Name, // queue
+			topicKey, // routing key
+			em.exchangeName, // exchange
+			false, // no-wait
+			nil, // args
+		)
+		if err != nil {
+			return m.ErrMessageMiddlewareMessage
+		}
+	}
+	
 	msgs, err := em.ch.Consume(
-		em.exchangeName, // queue
+		em.queue.Name, // queue
 		"tag-" + em.exchangeName, // consumer tag
 		false, // auto-ack
 		false, // exclusive
@@ -69,19 +99,20 @@ func (em *ExchangeMiddleware) Send(msg m.Message) error {
 	defer cancel()
 
 	body := msg.Body
-	err := em.ch.PublishWithContext(ctx,
-	em.exchangeName,     // exchange
-	"", // routing key
-	false,  // mandatory
-	false,  // immediate
-	amqp.Publishing {
-		ContentType: "text/plain",
-		Body:        []byte(body),
-	})
-	if err != nil {
-		return m.ErrMessageMiddlewareMessage
+	for _, topicKey := range em.topicKeys {
+		err := em.ch.PublishWithContext(ctx,
+		em.exchangeName,     // exchange
+		topicKey, // routing key
+		false,  // mandatory
+		false,  // immediate
+		amqp.Publishing {
+			ContentType: "text/plain",
+			Body:        []byte(body),
+		})
+		if err != nil {
+			return m.ErrMessageMiddlewareMessage
+		}
 	}
-
 	
 	return nil
 }
