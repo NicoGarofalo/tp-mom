@@ -14,6 +14,7 @@ type ExchangeMiddleware struct {
 	exchangeName string
 	topicKeys []string
 	queue amqp.Queue
+	isConsuming bool
 }
 
 
@@ -28,6 +29,9 @@ func (em *ExchangeMiddleware) StartConsuming(callbackFunc func(msg m.Message, ac
 		nil, // args
 	)
 	if err != nil {
+		if qm.conn.IsClosed() {
+			return m.ErrMessageMiddlewareDisconnected
+		}
 		return m.ErrMessageMiddlewareMessage
 	}
 
@@ -45,7 +49,7 @@ func (em *ExchangeMiddleware) StartConsuming(callbackFunc func(msg m.Message, ac
 			return m.ErrMessageMiddlewareMessage
 		}
 	}
-	
+	em.isConsuming = true
 	msgs, err := em.ch.Consume(
 		em.queue.Name, // queue
 		"tag-" + em.exchangeName, // consumer tag
@@ -59,41 +63,42 @@ func (em *ExchangeMiddleware) StartConsuming(callbackFunc func(msg m.Message, ac
 		return m.ErrMessageMiddlewareMessage
 	}
 
-	chanCloseNotify := make(chan *amqp.Error, 1)
-	em.conn.NotifyClose(chanCloseNotify)
-
 	for d := range msgs {
-		select {
-		case <- chanCloseNotify:
-			return m.ErrMessageMiddlewareDisconnected
-		default:
-			msg := m.Message{Body: string(d.Body)}
+		msg := m.Message{Body: string(d.Body)}
 
-			ackFn := func() {
-				d.Ack(false)
-			}
-
-			nackFn := func() {
-				d.Nack(false, false)
-			}
-
-			callbackFunc(msg, ackFn, nackFn)
+		ackFn := func() {
+			d.Ack(false)
 		}
-		
+
+		nackFn := func() {
+			d.Nack(false, false)
+		}
+
+		callbackFunc(msg, ackFn, nackFn)
+	}
+
+	if em.conn.IsClosed() {
+		return m.ErrMessageMiddlewareDisconnected
 	}
 
 	return nil
 }
 
 func (em *ExchangeMiddleware) StopConsuming() error {
-	err := em.ch.Cancel("tag-" + em.exchangeName, false)
-	if err != nil {
-		return m.ErrMessageMiddlewareClose
+	if em.conn.IsClosed(){
+		return m.ErrMessageMiddlewareDisconnected
+	}
+	if em.isConsuming{
+		err := em.ch.Cancel("tag-" + em.exchangeName, false)
+		if err != nil {
+			return m.ErrMessageMiddlewareClose
+		}
+		em.isConsuming = false
 	}
 	return nil
 }
 
-// Falta handlear el otro error ademas de otras mejoras
+
 func (em *ExchangeMiddleware) Send(msg m.Message) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -110,6 +115,9 @@ func (em *ExchangeMiddleware) Send(msg m.Message) error {
 			Body:        []byte(body),
 		})
 		if err != nil {
+			if em.conn.IsClosed() {
+				return m .ErrMessageMiddlewareDisconnected
+			}
 			return m.ErrMessageMiddlewareMessage
 		}
 	}
@@ -118,6 +126,14 @@ func (em *ExchangeMiddleware) Send(msg m.Message) error {
 }
 
 func (em *ExchangeMiddleware) Close() error {
+	if em.conn.IsClosed() {
+		return nil
+	}
+	
+	chErr := em.ch.Close()
+	if chErr != nil {
+		return m.ErrMessageMiddlewareClose
+	}
 	err := em.conn.Close()
 	if err != nil {
 		return m.ErrMessageMiddlewareClose
