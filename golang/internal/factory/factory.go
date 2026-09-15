@@ -36,11 +36,12 @@ func CreateQueueMiddleware(queueName string, connectionSettings m.ConnSettings) 
 		conn: conn,
 		ch: ch,
 		queue: q,
+		isConsuming: false,
 	}
 	return &qm, nil
 }
 
-// Falta ver donde va conn.Close, ch.Close
+
 func CreateExchangeMiddleware(exchange string, keys []string, connectionSettings m.ConnSettings) (m.Middleware, error) {
 	connString := fmt.Sprintf("amqp://guest:guest@%s:%d/", connectionSettings.Hostname, connectionSettings.Port)
 	conn, err := amqp.Dial(connString)
@@ -70,6 +71,8 @@ func CreateExchangeMiddleware(exchange string, keys []string, connectionSettings
 		conn: conn,
 		ch: ch,
 		exchangeName: exchange,
+		topicKeys: keys,
+		isConsuming: false,
 	}
 	return &em, nil
 }

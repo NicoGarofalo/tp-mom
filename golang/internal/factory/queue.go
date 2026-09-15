@@ -11,6 +11,7 @@ type QueueMiddleware struct {
 	conn *amqp.Connection
 	ch *amqp.Channel
 	queue amqp.Queue
+	isConsuming bool
 }
 
 
@@ -25,44 +26,50 @@ func (qm *QueueMiddleware) StartConsuming(callbackFunc func(msg m.Message, ack f
 		nil, // args
 	)
 	if err != nil {
+		if qm.conn.IsClosed() {
+			return m.ErrMessageMiddlewareDisconnected
+		}
 		return m.ErrMessageMiddlewareMessage
 	}
-
-	chanCloseNotify := make(chan *amqp.Error, 1)
-	qm.conn.NotifyClose(chanCloseNotify)
-
+	qm.isConsuming = true
 	for d := range msgs {
-		select {
-		case <- chanCloseNotify:
-			return m.ErrMessageMiddlewareDisconnected
-		default:
-			msg := m.Message{Body: string(d.Body)}
+		msg := m.Message{Body: string(d.Body)}
 
-			ackFn := func() {
-				d.Ack(false)
-			}
-
-			nackFn := func() {
-				d.Nack(false, false)
-			}
-
-			callbackFunc(msg, ackFn, nackFn)
+		ackFn := func() {
+			d.Ack(false)
 		}
-		
+
+		nackFn := func() {
+			d.Nack(false, false)
+		}
+
+		callbackFunc(msg, ackFn, nackFn)
+	}
+
+	if qm.conn.IsClosed() {
+		return m.ErrMessageMiddlewareDisconnected
 	}
 
 	return nil
 }
+
+
 
 func (qm *QueueMiddleware) StopConsuming() error {
-	err := qm.ch.Cancel("tag-" + qm.queue.Name, false)
-	if err != nil {
-		return m.ErrMessageMiddlewareClose
+	if(qm.conn.IsClosed()){
+		return m.ErrMessageMiddlewareDisconnected
+	}
+	if qm.isConsuming {
+		err := qm.ch.Cancel("tag-" + qm.queue.Name, false)
+		if err != nil {
+			return m.ErrMessageMiddlewareClose
+		}
+		qm.isConsuming = false
 	}
 	return nil
 }
 
-// Falta handlear el otro error ademas de otras mejoras
+
 func (qm *QueueMiddleware) Send(msg m.Message) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -78,6 +85,9 @@ func (qm *QueueMiddleware) Send(msg m.Message) error {
 		Body:        []byte(body),
 	})
 	if err != nil {
+		if qm.conn.IsClosed() {
+			return m .ErrMessageMiddlewareDisconnected
+		}
 		return m.ErrMessageMiddlewareMessage
 	}
 
@@ -86,8 +96,16 @@ func (qm *QueueMiddleware) Send(msg m.Message) error {
 }
 
 func (qm *QueueMiddleware) Close() error {
-	err := qm.conn.Close()
-	if err != nil {
+	if qm.conn.IsClosed() {
+		return nil
+	}
+
+	chErr := qm.ch.Close()
+	if chErr != nil {
+		return m.ErrMessageMiddlewareClose
+	}
+	connErr := qm.conn.Close()
+	if connErr != nil {
 		return m.ErrMessageMiddlewareClose
 	}
 	return nil
