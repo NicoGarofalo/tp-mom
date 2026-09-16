@@ -9,16 +9,17 @@ import (
 
 
 type ExchangeMiddleware struct {
-	conn *amqp.Connection
-	ch *amqp.Channel
+	BaseMiddleware
 	exchangeName string
 	topicKeys []string
-	queue amqp.Queue
-	isConsuming bool
 }
 
 
 func (em *ExchangeMiddleware) StartConsuming(callbackFunc func(msg m.Message, ack func(), nack func())) error {
+	//Corroboro que no se quiera llamar a StartConsuming luego de otro StartConsuming
+	if em.isConsuming {
+		return m.ErrMessageMiddlewareMessage
+	}
 	
 	q, err := em.ch.QueueDeclare(
 		"", // name
@@ -29,14 +30,16 @@ func (em *ExchangeMiddleware) StartConsuming(callbackFunc func(msg m.Message, ac
 		nil, // args
 	)
 	if err != nil {
-		if qm.conn.IsClosed() {
+		if em.conn.IsClosed() {
 			return m.ErrMessageMiddlewareDisconnected
 		}
 		return m.ErrMessageMiddlewareMessage
 	}
 
 	em.queue = q
+	em.tag = "tag-" + em.exchangeName
 
+	// Bindeo / vinculo la queue a cada topic key que hay en el topicKeys del struct
 	for _, topicKey := range em.topicKeys {
 		err = em.ch.QueueBind(
 			em.queue.Name, // queue
@@ -46,13 +49,17 @@ func (em *ExchangeMiddleware) StartConsuming(callbackFunc func(msg m.Message, ac
 			nil, // args
 		)
 		if err != nil {
+			if em.conn.IsClosed() {
+				return m.ErrMessageMiddlewareDisconnected
+			}
 			return m.ErrMessageMiddlewareMessage
 		}
 	}
-	em.isConsuming = true
+
+	// Consumo todos los topics bindeados
 	msgs, err := em.ch.Consume(
 		em.queue.Name, // queue
-		"tag-" + em.exchangeName, // consumer tag
+		em.tag, // consumer tag
 		false, // auto-ack
 		false, // exclusive
 		false, // no-local
@@ -60,22 +67,15 @@ func (em *ExchangeMiddleware) StartConsuming(callbackFunc func(msg m.Message, ac
 		nil, // args
 	)
 	if err != nil {
+		if em.conn.IsClosed() {
+			return m.ErrMessageMiddlewareDisconnected
+		}
 		return m.ErrMessageMiddlewareMessage
 	}
-
-	for d := range msgs {
-		msg := m.Message{Body: string(d.Body)}
-
-		ackFn := func() {
-			d.Ack(false)
-		}
-
-		nackFn := func() {
-			d.Nack(false, false)
-		}
-
-		callbackFunc(msg, ackFn, nackFn)
-	}
+	
+	em.isConsuming = true
+	consumeMessages(msgs, callbackFunc)
+	em.isConsuming = false
 
 	if em.conn.IsClosed() {
 		return m.ErrMessageMiddlewareDisconnected
@@ -84,25 +84,13 @@ func (em *ExchangeMiddleware) StartConsuming(callbackFunc func(msg m.Message, ac
 	return nil
 }
 
-func (em *ExchangeMiddleware) StopConsuming() error {
-	if em.conn.IsClosed(){
-		return m.ErrMessageMiddlewareDisconnected
-	}
-	if em.isConsuming{
-		err := em.ch.Cancel("tag-" + em.exchangeName, false)
-		if err != nil {
-			return m.ErrMessageMiddlewareClose
-		}
-		em.isConsuming = false
-	}
-	return nil
-}
 
 
 func (em *ExchangeMiddleware) Send(msg m.Message) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// Publico a todos los topicKeys que tengo definido en el struct
 	body := msg.Body
 	for _, topicKey := range em.topicKeys {
 		err := em.ch.PublishWithContext(ctx,
@@ -122,21 +110,5 @@ func (em *ExchangeMiddleware) Send(msg m.Message) error {
 		}
 	}
 	
-	return nil
-}
-
-func (em *ExchangeMiddleware) Close() error {
-	if em.conn.IsClosed() {
-		return nil
-	}
-	
-	chErr := em.ch.Close()
-	if chErr != nil {
-		return m.ErrMessageMiddlewareClose
-	}
-	err := em.conn.Close()
-	if err != nil {
-		return m.ErrMessageMiddlewareClose
-	}
 	return nil
 }
