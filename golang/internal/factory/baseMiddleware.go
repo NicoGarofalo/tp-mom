@@ -13,6 +13,8 @@ type BaseMiddleware struct {
 	isConsuming bool
 }
 
+const FIVE_SECS = 5
+
 func (bm *BaseMiddleware) StopConsuming() error {
 	if(bm.conn.IsClosed()){
 		return m.ErrMessageMiddlewareDisconnected
@@ -44,9 +46,11 @@ func (bm *BaseMiddleware) Close() error {
 }
 
 // Funcion auxiliar que tienen en común tanto Queue como Exchange.
+// Se lee indefinidamente del canal de mensajes msgsChan.
 // Obtiene mensajes del channel, y llamo a la callback function con el msg y las funciones de ack y nack.
-func consumeMessages(msgs <-chan amqp.Delivery, callbackFunc func(msg m.Message, ack func(), nack func())) {
-	for d := range msgs {
+// Se corta el flujo del for cuando se cierra el canal.
+func consumeMessages(msgsChan <-chan amqp.Delivery, callbackFunc func(msg m.Message, ack func(), nack func())) {
+	for d := range msgsChan {
 		msg := m.Message{Body: string(d.Body)}
 
 		ackFn := func() {

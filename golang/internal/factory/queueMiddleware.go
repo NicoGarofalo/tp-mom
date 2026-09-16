@@ -19,7 +19,8 @@ func (qm *QueueMiddleware) StartConsuming(callbackFunc func(msg m.Message, ack f
 	}
 
 	qm.tag = "tag-" + qm.queue.Name
-	msgs, err := qm.ch.Consume(
+	// Obtengo un canal para empezar a consumir los mensajes
+	msgsChan, err := qm.ch.Consume(
 		qm.queue.Name, // queue
 		qm.tag, // consumer tag
 		false, // auto-ack
@@ -37,7 +38,7 @@ func (qm *QueueMiddleware) StartConsuming(callbackFunc func(msg m.Message, ack f
 	}
 
 	qm.isConsuming = true
-	consumeMessages(msgs, callbackFunc)
+	consumeMessages(msgsChan, callbackFunc)
 	qm.isConsuming = false
 
 	// Si se cortó el consumo porque se cortó la conexión, devolvemos error
@@ -50,10 +51,11 @@ func (qm *QueueMiddleware) StartConsuming(callbackFunc func(msg m.Message, ack f
 
 
 func (qm *QueueMiddleware) Send(msg m.Message) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), FIVE_SECS*time.Second)
 	defer cancel()
 
 	body := msg.Body
+	// Publico a la queue
 	err := qm.ch.PublishWithContext(ctx,
 	"",     // exchange
 	qm.queue.Name, // publish to this queue
@@ -65,7 +67,7 @@ func (qm *QueueMiddleware) Send(msg m.Message) error {
 	})
 	if err != nil {
 		if qm.conn.IsClosed() {
-			return m .ErrMessageMiddlewareDisconnected
+			return m.ErrMessageMiddlewareDisconnected
 		}
 		return m.ErrMessageMiddlewareMessage
 	}

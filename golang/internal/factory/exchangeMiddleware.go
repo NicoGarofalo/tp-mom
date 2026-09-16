@@ -87,7 +87,7 @@ func (em *ExchangeMiddleware) StartConsuming(callbackFunc func(msg m.Message, ac
 
 
 func (em *ExchangeMiddleware) Send(msg m.Message) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), FIVE_SECS*time.Second)
 	defer cancel()
 
 	// Publico a todos los topicKeys que tengo definido en el struct
@@ -104,7 +104,7 @@ func (em *ExchangeMiddleware) Send(msg m.Message) error {
 		})
 		if err != nil {
 			if em.conn.IsClosed() {
-				return m .ErrMessageMiddlewareDisconnected
+				return m.ErrMessageMiddlewareDisconnected
 			}
 			return m.ErrMessageMiddlewareMessage
 		}
