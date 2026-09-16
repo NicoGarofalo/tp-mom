@@ -15,6 +15,7 @@ func CreateQueueMiddleware(queueName string, connectionSettings m.ConnSettings) 
 
 	ch, err := conn.Channel()
 	if err != nil {
+		conn.Close()
 		return nil, err
 	}
 
@@ -29,14 +30,18 @@ func CreateQueueMiddleware(queueName string, connectionSettings m.ConnSettings) 
 		},
 	)
 	if err != nil {
+		ch.Close()
+		conn.Close()
 		return nil, m.ErrMessageMiddlewareMessage
 	}
 	
 	qm := QueueMiddleware{
-		conn: conn,
-		ch: ch,
-		queue: q,
-		isConsuming: false,
+		BaseMiddleware: BaseMiddleware{
+			conn: conn,
+			ch: ch,
+			queue: q,
+			isConsuming: false,	
+		},
 	}
 	return &qm, nil
 }
@@ -51,6 +56,7 @@ func CreateExchangeMiddleware(exchange string, keys []string, connectionSettings
 
 	ch, err := conn.Channel()
 	if err != nil {
+		conn.Close()
 		return nil, err
 	}
 
@@ -64,15 +70,19 @@ func CreateExchangeMiddleware(exchange string, keys []string, connectionSettings
 		nil,  // arsgs
 	)
 	if err != nil {
+		ch.Close()
+		conn.Close()
 		return nil, m.ErrMessageMiddlewareMessage
 	}
 	
 	em := ExchangeMiddleware{
-		conn: conn,
-		ch: ch,
+		BaseMiddleware: BaseMiddleware{
+			conn: conn,
+			ch: ch,
+			isConsuming: false,
+		},
 		exchangeName: exchange,
 		topicKeys: keys,
-		isConsuming: false,
 	}
 	return &em, nil
 }
